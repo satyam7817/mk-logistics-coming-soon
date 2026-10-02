@@ -72,7 +72,7 @@ export default function App() {
       <div className="background-overlay" />
 
       <section className="coming-soon-content" aria-labelledby="coming-soon-title">
-        <p className="eyebrow">MK LOGISTICS</p>
+        <p className="eyebrow"></p>
 
         <h1 id="coming-soon-title">Something New Comming Soon</h1>
 
