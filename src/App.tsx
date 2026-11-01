@@ -69,48 +69,77 @@ function getAudioContext() {
 
 function playClockTick(audioContext: AudioContext) {
   const now = audioContext.currentTime;
+
   const master = audioContext.createGain();
   master.gain.setValueAtTime(0.0001, now);
-  master.gain.exponentialRampToValueAtTime(0.2, now + 0.01);
+  master.gain.exponentialRampToValueAtTime(0.18, now + 0.004);
   master.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
   master.connect(audioContext.destination);
 
-  const primaryOsc = audioContext.createOscillator();
-  primaryOsc.type = "square";
-  primaryOsc.frequency.setValueAtTime(2200, now);
-  primaryOsc.frequency.exponentialRampToValueAtTime(680, now + 0.09);
+  const body = audioContext.createOscillator();
+  body.type = "square";
+  body.frequency.setValueAtTime(2200, now);
+  body.frequency.exponentialRampToValueAtTime(140, now + 0.07);
 
-  const primaryGain = audioContext.createGain();
-  primaryGain.gain.setValueAtTime(0.0001, now);
-  primaryGain.gain.exponentialRampToValueAtTime(0.18, now + 0.006);
-  primaryGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
+  const bodyGain = audioContext.createGain();
+  bodyGain.gain.setValueAtTime(0.0001, now);
+  bodyGain.gain.exponentialRampToValueAtTime(0.22, now + 0.003);
+  bodyGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
 
-  const harmonicOsc = audioContext.createOscillator();
-  harmonicOsc.type = "triangle";
-  harmonicOsc.frequency.setValueAtTime(1250, now);
-  harmonicOsc.frequency.exponentialRampToValueAtTime(540, now + 0.11);
+  const harmonic = audioContext.createOscillator();
+  harmonic.type = "triangle";
+  harmonic.frequency.setValueAtTime(1100, now);
+  harmonic.frequency.exponentialRampToValueAtTime(420, now + 0.12);
 
   const harmonicGain = audioContext.createGain();
   harmonicGain.gain.setValueAtTime(0.0001, now);
-  harmonicGain.gain.exponentialRampToValueAtTime(0.1, now + 0.008);
-  harmonicGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.13);
+  harmonicGain.gain.exponentialRampToValueAtTime(0.14, now + 0.004);
+  harmonicGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
 
-  primaryOsc.connect(primaryGain);
-  primaryGain.connect(master);
+  const lowpass = audioContext.createBiquadFilter();
+  lowpass.type = "lowpass";
+  lowpass.frequency.setValueAtTime(2600, now);
+  lowpass.Q.value = 0.8;
 
-  harmonicOsc.connect(harmonicGain);
+  const clickBuffer = audioContext.createBuffer(1, 4096, audioContext.sampleRate);
+  const clickData = clickBuffer.getChannelData(0);
+
+  for (let i = 0; i < clickData.length; i += 1) {
+    const envelope = Math.exp(-i / (clickData.length * 0.18));
+    clickData[i] = (Math.random() * 2 - 1) * envelope * 0.9;
+  }
+
+  const noise = audioContext.createBufferSource();
+  noise.buffer = clickBuffer;
+
+  const noiseGain = audioContext.createGain();
+  noiseGain.gain.setValueAtTime(0.0001, now);
+  noiseGain.gain.exponentialRampToValueAtTime(0.09, now + 0.002);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+
+  body.connect(bodyGain);
+  bodyGain.connect(master);
+
+  harmonic.connect(harmonicGain);
   harmonicGain.connect(master);
 
-  primaryOsc.start(now);
-  harmonicOsc.start(now);
-  primaryOsc.stop(now + 0.10);
-  harmonicOsc.stop(now + 0.14);
+  noise.connect(noiseGain);
+  noiseGain.connect(lowpass);
+  lowpass.connect(master);
+
+  body.start(now);
+  harmonic.start(now);
+  noise.start(now);
+
+  body.stop(now + 0.09);
+  harmonic.stop(now + 0.13);
+  noise.stop(now + 0.09);
 }
 
 export default function App() {
   const [timeLeft, setTimeLeft] = useState<TimeLeft>(() => getTimeLeft());
-  const [soundEnabled, setSoundEnabled] = useState(false);
-  const soundEnabledRef = useRef(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const soundEnabledRef = useRef(true);
   const audioContextRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
@@ -118,6 +147,10 @@ export default function App() {
   }, [soundEnabled]);
 
   const ensureAudioReady = async () => {
+    if (!soundEnabledRef.current) {
+      return null;
+    }
+
     if (!audioContextRef.current) {
       const context = getAudioContext();
       if (!context) {
@@ -158,6 +191,24 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    const unlock = () => {
+      void ensureAudioReady().then((context) => {
+        if (context) {
+          playClockTick(context);
+        }
+      });
+    };
+
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
+
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
+
   const targetLabel = useMemo(
     () => "8 November 2026 · 7:00 PM IST (GMT+05:30)",
     [],
@@ -168,8 +219,7 @@ export default function App() {
     setSoundEnabled(nextState);
 
     if (nextState) {
-      await ensureAudioReady();
-      const context = audioContextRef.current;
+      const context = await ensureAudioReady();
       if (context) {
         playClockTick(context);
       }
