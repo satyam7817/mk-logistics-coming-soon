@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { OceanBackground } from "./backgrounds";
 
 const TARGET_TIME = new Date("2026-11-08T19:00:00+05:30").getTime();
+const CLOCK_SOUND_URL =
+  "https://cdn.pixabay.com/download/audio/2025/06/10/audio_63b6707ae6.mp3?filename=dragon-studio-slow-cinematic-clock-ticking-357979.mp3";
 
 type TimeLeft = {
   days: number;
@@ -50,119 +52,36 @@ function CountdownUnit({
   );
 }
 
-function getAudioContext() {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const AudioCtor =
-    window.AudioContext ||
-    (window as typeof window & { webkitAudioContext?: typeof AudioContext })
-      .webkitAudioContext;
-
-  if (!AudioCtor) {
-    return null;
-  }
-
-  return new AudioCtor();
-}
-
-function playClockTick(audioContext: AudioContext) {
-  const now = audioContext.currentTime;
-
-  const master = audioContext.createGain();
-  master.gain.setValueAtTime(0.0001, now);
-  master.gain.exponentialRampToValueAtTime(0.16, now + 0.003);
-  master.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
-  master.connect(audioContext.destination);
-
-  const body = audioContext.createOscillator();
-  body.type = "square";
-  body.frequency.setValueAtTime(2200, now);
-  body.frequency.exponentialRampToValueAtTime(180, now + 0.06);
-
-  const bodyGain = audioContext.createGain();
-  bodyGain.gain.setValueAtTime(0.0001, now);
-  bodyGain.gain.exponentialRampToValueAtTime(0.2, now + 0.002);
-  bodyGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
-
-  const harmonic = audioContext.createOscillator();
-  harmonic.type = "triangle";
-  harmonic.frequency.setValueAtTime(1100, now);
-  harmonic.frequency.exponentialRampToValueAtTime(420, now + 0.12);
-
-  const harmonicGain = audioContext.createGain();
-  harmonicGain.gain.setValueAtTime(0.0001, now);
-  harmonicGain.gain.exponentialRampToValueAtTime(0.12, now + 0.004);
-  harmonicGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
-
-  const clickBuffer = audioContext.createBuffer(1, 4096, audioContext.sampleRate);
-  const clickData = clickBuffer.getChannelData(0);
-
-  for (let i = 0; i < clickData.length; i += 1) {
-    const envelope = Math.exp(-i / (clickData.length * 0.18));
-    clickData[i] = (Math.random() * 2 - 1) * envelope * 0.5;
-  }
-
-  const noise = audioContext.createBufferSource();
-  noise.buffer = clickBuffer;
-
-  const noiseGain = audioContext.createGain();
-  noiseGain.gain.setValueAtTime(0.0001, now);
-  noiseGain.gain.exponentialRampToValueAtTime(0.12, now + 0.002);
-  noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
-
-  const lowpass = audioContext.createBiquadFilter();
-  lowpass.type = "lowpass";
-  lowpass.frequency.setValueAtTime(2800, now);
-  lowpass.Q.value = 0.6;
-
-  body.connect(bodyGain);
-  bodyGain.connect(master);
-
-  harmonic.connect(harmonicGain);
-  harmonicGain.connect(master);
-
-  noise.connect(noiseGain);
-  noiseGain.connect(lowpass);
-  lowpass.connect(master);
-
-  body.start(now);
-  harmonic.start(now);
-  noise.start(now);
-
-  body.stop(now + 0.09);
-  harmonic.stop(now + 0.14);
-  noise.stop(now + 0.09);
-}
-
 export default function App() {
   const [timeLeft, setTimeLeft] = useState<TimeLeft>(() => getTimeLeft());
-  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const unlockAudio = async () => {
-    if (!audioContextRef.current) {
-      const context = getAudioContext();
-      if (!context) {
-        return;
-      }
-      audioContextRef.current = context;
+  const tryStartAudio = async () => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
     }
 
-    if (audioContextRef.current.state === "suspended") {
-      await audioContextRef.current.resume();
-    }
+    audio.volume = 0.65;
+    audio.loop = true;
 
-    playClockTick(audioContextRef.current);
+    try {
+      await audio.play();
+    } catch {
+      // Browser may still block playback until the user interacts with the page.
+      // We retry on pointerdown/keydown below.
+    }
   };
 
   useEffect(() => {
     const handleInteraction = () => {
-      void unlockAudio();
+      void tryStartAudio();
     };
 
     window.addEventListener("pointerdown", handleInteraction, { once: true });
     window.addEventListener("keydown", handleInteraction, { once: true });
+
+    void tryStartAudio();
 
     return () => {
       window.removeEventListener("pointerdown", handleInteraction);
@@ -172,20 +91,7 @@ export default function App() {
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      setTimeLeft((previous) => {
-        const next = getTimeLeft();
-
-        if (
-          !previous.complete &&
-          !next.complete &&
-          next.seconds !== previous.seconds &&
-          audioContextRef.current?.state === "running"
-        ) {
-          playClockTick(audioContextRef.current);
-        }
-
-        return next;
-      });
+      setTimeLeft(getTimeLeft());
     }, 1000);
 
     return () => window.clearInterval(timer);
@@ -198,6 +104,16 @@ export default function App() {
 
   return (
     <main className="coming-soon-shell">
+      <audio
+        ref={audioRef}
+        src={CLOCK_SOUND_URL}
+        preload="auto"
+        autoPlay
+        loop
+        playsInline
+        style={{ display: "none" }}
+      />
+
       <OceanBackground className="ocean-background" frameRate={30} />
       <div className="background-overlay" />
 
