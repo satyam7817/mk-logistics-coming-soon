@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { OceanBackground } from "./backgrounds";
 
 const TARGET_TIME = new Date("2026-11-08T19:00:00+05:30").getTime();
@@ -50,12 +50,59 @@ function CountdownUnit({
   );
 }
 
+function playClockTick() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const AudioCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+  if (!AudioCtor) {
+    return;
+  }
+
+  const audioContext = new AudioCtor();
+  const now = audioContext.currentTime;
+  const oscillator = audioContext.createOscillator();
+  const gainNode = audioContext.createGain();
+
+  oscillator.type = "triangle";
+  oscillator.frequency.setValueAtTime(1200, now);
+  oscillator.frequency.exponentialRampToValueAtTime(900, now + 0.06);
+
+  gainNode.gain.setValueAtTime(0.0001, now);
+  gainNode.gain.exponentialRampToValueAtTime(0.08, now + 0.015);
+  gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+
+  oscillator.connect(gainNode);
+  gainNode.connect(audioContext.destination);
+
+  oscillator.start(now);
+  oscillator.stop(now + 0.13);
+
+  void audioContext.close();
+}
+
 export default function App() {
   const [timeLeft, setTimeLeft] = useState<TimeLeft>(() => getTimeLeft());
+  const [soundEnabled, setSoundEnabled] = useState(false);
+  const soundEnabledRef = useRef(false);
+
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      setTimeLeft(getTimeLeft());
+      setTimeLeft((previous) => {
+        const next = getTimeLeft();
+
+        if (soundEnabledRef.current && !previous.complete && !next.complete && next.seconds !== previous.seconds) {
+          playClockTick();
+        }
+
+        return next;
+      });
     }, 1000);
 
     return () => window.clearInterval(timer);
@@ -65,6 +112,24 @@ export default function App() {
     () => "8 November 2026 · 7:00 PM IST (GMT+05:30)",
     [],
   );
+
+  const toggleSound = async () => {
+    if (!soundEnabled) {
+      try {
+        const AudioCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+        if (AudioCtor) {
+          const audioContext = new AudioCtor();
+          await audioContext.resume();
+          await audioContext.close();
+        }
+      } catch {
+        // Ignore audio initialization errors; the tick sound will still attempt to play when triggered.
+      }
+    }
+
+    setSoundEnabled((previous) => !previous);
+  };
 
   return (
     <main className="coming-soon-shell">
@@ -79,6 +144,15 @@ export default function App() {
         <p className="intro">
           We are preparing something new. Stay tuned.
         </p>
+
+        <button
+          type="button"
+          className={`sound-toggle${soundEnabled ? " sound-toggle-enabled" : ""}`}
+          onClick={toggleSound}
+          aria-pressed={soundEnabled}
+        >
+          {soundEnabled ? "Sound: On" : "Sound: Off"}
+        </button>
 
         {timeLeft.complete ? (
           <div className="launch-message">We&apos;re live.</div>
