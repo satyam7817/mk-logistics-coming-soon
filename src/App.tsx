@@ -72,18 +72,18 @@ function playClockTick(audioContext: AudioContext) {
 
   const master = audioContext.createGain();
   master.gain.setValueAtTime(0.0001, now);
-  master.gain.exponentialRampToValueAtTime(0.18, now + 0.004);
-  master.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+  master.gain.exponentialRampToValueAtTime(0.16, now + 0.003);
+  master.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
   master.connect(audioContext.destination);
 
   const body = audioContext.createOscillator();
   body.type = "square";
   body.frequency.setValueAtTime(2200, now);
-  body.frequency.exponentialRampToValueAtTime(140, now + 0.07);
+  body.frequency.exponentialRampToValueAtTime(180, now + 0.06);
 
   const bodyGain = audioContext.createGain();
   bodyGain.gain.setValueAtTime(0.0001, now);
-  bodyGain.gain.exponentialRampToValueAtTime(0.22, now + 0.003);
+  bodyGain.gain.exponentialRampToValueAtTime(0.2, now + 0.002);
   bodyGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
 
   const harmonic = audioContext.createOscillator();
@@ -93,20 +93,15 @@ function playClockTick(audioContext: AudioContext) {
 
   const harmonicGain = audioContext.createGain();
   harmonicGain.gain.setValueAtTime(0.0001, now);
-  harmonicGain.gain.exponentialRampToValueAtTime(0.14, now + 0.004);
+  harmonicGain.gain.exponentialRampToValueAtTime(0.12, now + 0.004);
   harmonicGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
-
-  const lowpass = audioContext.createBiquadFilter();
-  lowpass.type = "lowpass";
-  lowpass.frequency.setValueAtTime(2600, now);
-  lowpass.Q.value = 0.8;
 
   const clickBuffer = audioContext.createBuffer(1, 4096, audioContext.sampleRate);
   const clickData = clickBuffer.getChannelData(0);
 
   for (let i = 0; i < clickData.length; i += 1) {
     const envelope = Math.exp(-i / (clickData.length * 0.18));
-    clickData[i] = (Math.random() * 2 - 1) * envelope * 0.9;
+    clickData[i] = (Math.random() * 2 - 1) * envelope * 0.5;
   }
 
   const noise = audioContext.createBufferSource();
@@ -114,8 +109,13 @@ function playClockTick(audioContext: AudioContext) {
 
   const noiseGain = audioContext.createGain();
   noiseGain.gain.setValueAtTime(0.0001, now);
-  noiseGain.gain.exponentialRampToValueAtTime(0.09, now + 0.002);
-  noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+  noiseGain.gain.exponentialRampToValueAtTime(0.12, now + 0.002);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
+
+  const lowpass = audioContext.createBiquadFilter();
+  lowpass.type = "lowpass";
+  lowpass.frequency.setValueAtTime(2800, now);
+  lowpass.Q.value = 0.6;
 
   body.connect(bodyGain);
   bodyGain.connect(master);
@@ -132,29 +132,19 @@ function playClockTick(audioContext: AudioContext) {
   noise.start(now);
 
   body.stop(now + 0.09);
-  harmonic.stop(now + 0.13);
+  harmonic.stop(now + 0.14);
   noise.stop(now + 0.09);
 }
 
 export default function App() {
   const [timeLeft, setTimeLeft] = useState<TimeLeft>(() => getTimeLeft());
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const soundEnabledRef = useRef(true);
   const audioContextRef = useRef<AudioContext | null>(null);
 
-  useEffect(() => {
-    soundEnabledRef.current = soundEnabled;
-  }, [soundEnabled]);
-
-  const ensureAudioReady = async () => {
-    if (!soundEnabledRef.current) {
-      return null;
-    }
-
+  const unlockAudio = async () => {
     if (!audioContextRef.current) {
       const context = getAudioContext();
       if (!context) {
-        return null;
+        return;
       }
       audioContextRef.current = context;
     }
@@ -163,8 +153,22 @@ export default function App() {
       await audioContextRef.current.resume();
     }
 
-    return audioContextRef.current;
+    playClockTick(audioContextRef.current);
   };
+
+  useEffect(() => {
+    const handleInteraction = () => {
+      void unlockAudio();
+    };
+
+    window.addEventListener("pointerdown", handleInteraction, { once: true });
+    window.addEventListener("keydown", handleInteraction, { once: true });
+
+    return () => {
+      window.removeEventListener("pointerdown", handleInteraction);
+      window.removeEventListener("keydown", handleInteraction);
+    };
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -172,16 +176,12 @@ export default function App() {
         const next = getTimeLeft();
 
         if (
-          soundEnabledRef.current &&
           !previous.complete &&
           !next.complete &&
-          next.seconds !== previous.seconds
+          next.seconds !== previous.seconds &&
+          audioContextRef.current?.state === "running"
         ) {
-          void ensureAudioReady().then((context) => {
-            if (context) {
-              playClockTick(context);
-            }
-          });
+          playClockTick(audioContextRef.current);
         }
 
         return next;
@@ -191,40 +191,10 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    const unlock = () => {
-      void ensureAudioReady().then((context) => {
-        if (context) {
-          playClockTick(context);
-        }
-      });
-    };
-
-    window.addEventListener("pointerdown", unlock, { once: true });
-    window.addEventListener("keydown", unlock, { once: true });
-
-    return () => {
-      window.removeEventListener("pointerdown", unlock);
-      window.removeEventListener("keydown", unlock);
-    };
-  }, []);
-
   const targetLabel = useMemo(
     () => "8 November 2026 · 7:00 PM IST (GMT+05:30)",
     [],
   );
-
-  const toggleSound = async () => {
-    const nextState = !soundEnabled;
-    setSoundEnabled(nextState);
-
-    if (nextState) {
-      const context = await ensureAudioReady();
-      if (context) {
-        playClockTick(context);
-      }
-    }
-  };
 
   return (
     <main className="coming-soon-shell">
@@ -239,15 +209,6 @@ export default function App() {
         <p className="intro">
           We are preparing something new. Stay tuned.
         </p>
-
-        <button
-          type="button"
-          className={`sound-toggle${soundEnabled ? " sound-toggle-enabled" : ""}`}
-          onClick={toggleSound}
-          aria-pressed={soundEnabled}
-        >
-          {soundEnabled ? "Sound: On" : "Sound: Off"}
-        </button>
 
         {timeLeft.complete ? (
           <div className="launch-message">We&apos;re live.</div>
