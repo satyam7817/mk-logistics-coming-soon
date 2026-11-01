@@ -50,55 +50,105 @@ function CountdownUnit({
   );
 }
 
-function playClockTick() {
+function getAudioContext() {
   if (typeof window === "undefined") {
-    return;
+    return null;
   }
 
-  const AudioCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  const AudioCtor =
+    window.AudioContext ||
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext;
 
   if (!AudioCtor) {
-    return;
+    return null;
   }
 
-  const audioContext = new AudioCtor();
+  return new AudioCtor();
+}
+
+function playClockTick(audioContext: AudioContext) {
   const now = audioContext.currentTime;
-  const oscillator = audioContext.createOscillator();
-  const gainNode = audioContext.createGain();
+  const master = audioContext.createGain();
+  master.gain.setValueAtTime(0.0001, now);
+  master.gain.exponentialRampToValueAtTime(0.2, now + 0.01);
+  master.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+  master.connect(audioContext.destination);
 
-  oscillator.type = "triangle";
-  oscillator.frequency.setValueAtTime(1200, now);
-  oscillator.frequency.exponentialRampToValueAtTime(900, now + 0.06);
+  const primaryOsc = audioContext.createOscillator();
+  primaryOsc.type = "square";
+  primaryOsc.frequency.setValueAtTime(2200, now);
+  primaryOsc.frequency.exponentialRampToValueAtTime(680, now + 0.09);
 
-  gainNode.gain.setValueAtTime(0.0001, now);
-  gainNode.gain.exponentialRampToValueAtTime(0.08, now + 0.015);
-  gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+  const primaryGain = audioContext.createGain();
+  primaryGain.gain.setValueAtTime(0.0001, now);
+  primaryGain.gain.exponentialRampToValueAtTime(0.18, now + 0.006);
+  primaryGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
 
-  oscillator.connect(gainNode);
-  gainNode.connect(audioContext.destination);
+  const harmonicOsc = audioContext.createOscillator();
+  harmonicOsc.type = "triangle";
+  harmonicOsc.frequency.setValueAtTime(1250, now);
+  harmonicOsc.frequency.exponentialRampToValueAtTime(540, now + 0.11);
 
-  oscillator.start(now);
-  oscillator.stop(now + 0.13);
+  const harmonicGain = audioContext.createGain();
+  harmonicGain.gain.setValueAtTime(0.0001, now);
+  harmonicGain.gain.exponentialRampToValueAtTime(0.1, now + 0.008);
+  harmonicGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.13);
 
-  void audioContext.close();
+  primaryOsc.connect(primaryGain);
+  primaryGain.connect(master);
+
+  harmonicOsc.connect(harmonicGain);
+  harmonicGain.connect(master);
+
+  primaryOsc.start(now);
+  harmonicOsc.start(now);
+  primaryOsc.stop(now + 0.10);
+  harmonicOsc.stop(now + 0.14);
 }
 
 export default function App() {
   const [timeLeft, setTimeLeft] = useState<TimeLeft>(() => getTimeLeft());
   const [soundEnabled, setSoundEnabled] = useState(false);
   const soundEnabledRef = useRef(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
     soundEnabledRef.current = soundEnabled;
   }, [soundEnabled]);
+
+  const ensureAudioReady = async () => {
+    if (!audioContextRef.current) {
+      const context = getAudioContext();
+      if (!context) {
+        return null;
+      }
+      audioContextRef.current = context;
+    }
+
+    if (audioContextRef.current.state === "suspended") {
+      await audioContextRef.current.resume();
+    }
+
+    return audioContextRef.current;
+  };
 
   useEffect(() => {
     const timer = window.setInterval(() => {
       setTimeLeft((previous) => {
         const next = getTimeLeft();
 
-        if (soundEnabledRef.current && !previous.complete && !next.complete && next.seconds !== previous.seconds) {
-          playClockTick();
+        if (
+          soundEnabledRef.current &&
+          !previous.complete &&
+          !next.complete &&
+          next.seconds !== previous.seconds
+        ) {
+          void ensureAudioReady().then((context) => {
+            if (context) {
+              playClockTick(context);
+            }
+          });
         }
 
         return next;
@@ -114,21 +164,16 @@ export default function App() {
   );
 
   const toggleSound = async () => {
-    if (!soundEnabled) {
-      try {
-        const AudioCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    const nextState = !soundEnabled;
+    setSoundEnabled(nextState);
 
-        if (AudioCtor) {
-          const audioContext = new AudioCtor();
-          await audioContext.resume();
-          await audioContext.close();
-        }
-      } catch {
-        // Ignore audio initialization errors; the tick sound will still attempt to play when triggered.
+    if (nextState) {
+      await ensureAudioReady();
+      const context = audioContextRef.current;
+      if (context) {
+        playClockTick(context);
       }
     }
-
-    setSoundEnabled((previous) => !previous);
   };
 
   return (
